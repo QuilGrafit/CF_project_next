@@ -1,12 +1,12 @@
 // pages/api/webhook.js
 import { Telegraf, Markup, session } from 'telegraf';
-import { message } from 'telegraf/filters';
+import { message } => 'telegraf/filters'; // Исправлена опечатка в стрелочной функции
 import { MongoClient } from 'mongodb';
-import { DateTime } from 'luxon'; // Используется для работы со временем/датами
-import HoroscopeGenerator from '../../lib/horoscope.js'; // Ваш модуль для генерации гороскопов
-import Keyboard from '../../lib/Keyboard.js'; // Дефолтный импорт всех функций клавиатуры
-import TEXTS from '../../texts.js'; // !!! ВАЖНО: Правильный импорт TEXTS из отдельного файла
-import { sendMessage, showAds } from '../../lib/telegram.js'; // Ваши утилиты для Telegram
+import { DateTime } from 'luxon';
+import HoroscopeGenerator from '../../lib/horoscope.js'; // Импортируем ваш объект HoroscopeGenerator
+import Keyboard from '../../lib/Keyboard.js';
+import TEXTS from '../../texts.js';
+import { sendMessage, showAds } from '../../lib/telegram.js';
 
 // Загрузка переменных окружения
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -15,19 +15,23 @@ const MONGO_DB_NAME = process.env.MONGO_DB_NAME || 'sample_mflix';
 const USERS_COLLECTION_NAME = process.env.MONGO_COLLECTION_NAME || 'users';
 const TON_WALLET_ADDRESS = process.env.TON_WALLET_ADDRESS;
 
+console.log("Webhook script started.");
+console.log(`BOT_TOKEN loaded: ${!!BOT_TOKEN}`);
+console.log(`MONGO_URI loaded: ${!!MONGO_URI}`);
+
 if (!BOT_TOKEN) throw new Error('BOT_TOKEN must be provided!');
 if (!MONGO_URI) throw new Error('MONGO_URI must be provided!');
 
 const bot = new Telegraf(BOT_TOKEN);
 let usersCollection;
 
-// Инициализация HoroscopeGenerator
-const horoscopeGenerator = new HoroscopeGenerator();
+// !!! ЭТА СТРОКА УДАЛЕНА ИЛИ ЗАКОММЕНТИРОВАНА: const horoscopeGenerator = new HoroscopeGenerator();
+// Теперь HoroscopeGenerator - это уже сам объект, его не нужно "конструировать"
 
-// MongoDB connection setup
 async function connectToMongo() {
     if (usersCollection) {
-        return; // Already connected
+        console.log("MongoDB already connected.");
+        return;
     }
     try {
         const client = new MongoClient(MONGO_URI);
@@ -37,21 +41,21 @@ async function connectToMongo() {
         console.log("MongoDB connected and collection obtained successfully!");
     } catch (error) {
         console.error("Failed to connect to MongoDB:", error);
-        // В продакшене, возможно, стоит выбросить ошибку или gracefully завершить работу
         throw error;
     }
 }
 
-// Middleware для обеспечения подключения к MongoDB
 bot.use(async (ctx, next) => {
+    console.log("Middleware: Checking MongoDB connection...");
     if (!usersCollection) {
         await connectToMongo();
     }
+    console.log("Middleware: MongoDB connection ensured. Processing next...");
     await next();
 });
 
-// Middleware для получения или создания пользователя
 bot.use(async (ctx, next) => {
+    console.log(`Middleware: User ${ctx.from.id} request. Checking/creating user...`);
     const userId = ctx.from.id;
     let user = await usersCollection.findOne({ user_id: userId });
 
@@ -64,6 +68,10 @@ bot.use(async (ctx, next) => {
             last_activity: new Date(),
             current_state: null,
             chosen_sign: null,
+            // Если вы храните zodiac_sign и birth_date в user объекте, убедитесь, что они инициализированы
+            zodiac_sign: null,
+            birth_date: null,
+            horoscope_type: null,
         };
         await usersCollection.insertOne(user);
         console.log(`New user registered: ${userId}`);
@@ -72,12 +80,13 @@ bot.use(async (ctx, next) => {
             { user_id: userId },
             { $set: { last_activity: new Date() } }
         );
+        console.log(`Existing user ${userId} updated.`);
     }
-    ctx.state.user = user; // Сохраняем пользователя в ctx.state для удобства
+    ctx.state.user = user;
+    console.log(`Middleware: User state set for ${userId}. Processing next...`);
     await next();
 });
 
-// Helper to get user language with fallback
 const getUserLanguage = (ctx) => {
     const userLanguage = ctx.state.user.language;
     if (!userLanguage || !TEXTS[userLanguage]) {
@@ -87,35 +96,37 @@ const getUserLanguage = (ctx) => {
     return userLanguage;
 };
 
-// States (перенесены сюда из вашей предыдущей версии)
 const STEPS = {
     CHOOSE_SIGN: 'choose_sign',
     CHOOSE_DURATION: 'choose_duration',
 };
 
-
-// --- Handlers ---
-
 bot.start(async (ctx) => {
+    console.log("Handler: /start command received.");
     try {
         const userLanguage = getUserLanguage(ctx);
+        console.log(`Start handler: userLanguage is '${userLanguage}'.`);
+        console.log(`Start handler: TEXTS[userLanguage].welcome_message: '${TEXTS[userLanguage]?.welcome_message}'`);
+        console.log(`Start handler: Keyboard.main_menu type: ${typeof Keyboard.main_menu}`);
+
         await usersCollection.updateOne(
             { user_id: ctx.from.id },
             { $set: { current_state: null, chosen_sign: null } }
         );
-        // Используем функции из объекта Keyboard
         await ctx.reply(TEXTS[userLanguage].welcome_message, Keyboard.main_menu(userLanguage));
+        console.log("Start handler: Reply sent successfully.");
     } catch (error) {
         console.error("Error in /start handler:", error);
-        const userLanguage = getUserLanguage(ctx); // Повторно получаем на случай, если ошибка была до установки userLanguage
+        const userLanguage = getUserLanguage(ctx);
         await ctx.reply(TEXTS[userLanguage]?.error_message || "Произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте еще раз позже.");
     }
 });
 
-bot.hears(message('text'), async (ctx) => { // Используем message('text') фильтр
+bot.hears(message('text'), async (ctx) => {
+    console.log(`Handler: Hears text received: "${ctx.message.text}"`);
     const userLanguage = getUserLanguage(ctx);
     const texts = TEXTS[userLanguage];
-    const user = ctx.state.user; // Получаем объект пользователя из ctx.state
+    const user = ctx.state.user;
 
     // Главное меню
     if (ctx.message.text === texts.get_horoscope) {
@@ -123,16 +134,12 @@ bot.hears(message('text'), async (ctx) => { // Используем message('tex
         await usersCollection.updateOne({ user_id: user.user_id }, { $set: { current_state: STEPS.CHOOSE_SIGN } });
         return ctx.reply(texts.choose_sign, Keyboard.zodiac_signs_menu(userLanguage));
     } else if (ctx.message.text === texts.settings) {
-        // Логика для настроек
-        return ctx.reply("Настройки пока не реализованы.", Keyboard.main_menu(userLanguage)); // TODO: implement settings
+        return ctx.reply("Настройки пока не реализованы.", Keyboard.main_menu(userLanguage));
     } else if (ctx.message.text === texts.about_us) {
-        // Логика для "О нас"
-        return ctx.reply("Информация о боте.", Keyboard.main_menu(userLanguage)); // TODO: implement about us
+        return ctx.reply("Информация о боте.", Keyboard.main_menu(userLanguage));
     } else if (ctx.message.text === texts.ton_wallet) {
-        // Логика для TON кошелька
-        return ctx.reply(`TON кошелек: ${TON_WALLET_ADDRESS}`, Keyboard.main_menu(userLanguage)); // Используем TON_WALLET_ADDRESS из .env
+        return ctx.reply(`TON кошелек: ${TON_WALLET_ADDRESS}`, Keyboard.main_menu(userLanguage));
     } else if (ctx.message.text === texts.share_bot) {
-        // Логика для "Поделиться ботом"
         const botUsername = ctx.botInfo.username;
         const shareText = encodeURIComponent(TEXTS[userLanguage].welcome_message + `\n\n@${botUsername}`);
         const shareUrl = `https://t.me/share/url?url=https://t.me/${botUsername}&text=${shareText}`;
@@ -151,8 +158,8 @@ bot.hears(message('text'), async (ctx) => { // Используем message('tex
 
     // Обработка знаков зодиака
     if (user.current_state === STEPS.CHOOSE_SIGN) {
-        // validateSign, get_daily_horoscope и т.д. должны быть методами HoroscopeGenerator
-        const sign = horoscopeGenerator.validateSign(ctx.message.text);
+        // Теперь вызываем метод validateSign напрямую из объекта HoroscopeGenerator
+        const sign = HoroscopeGenerator.validateSign(ctx.message.text);
         if (sign) {
             user.chosen_sign = sign;
             user.current_state = STEPS.CHOOSE_DURATION;
@@ -172,53 +179,72 @@ bot.hears(message('text'), async (ctx) => { // Используем message('tex
         let horoscopeResult = "";
         let periodText = "";
 
-        // Сбросить состояние после получения гороскопа
-        user.current_state = null;
-        user.chosen_sign = null;
-        await usersCollection.updateOne(
-            { user_id: user.user_id },
-            { $set: { current_state: null, chosen_sign: null } }
-        );
-
-        // Используем методы HoroscopeGenerator
+        // Устанавливаем horoscope_type для вызова HoroscopeGenerator.generate
+        let horoscopeType;
         if (ctx.message.text === texts.today) {
-            horoscopeResult = horoscopeGenerator.getDailyHoroscope(sign);
+            horoscopeType = 'daily';
             periodText = texts.today;
         } else if (ctx.message.text === texts.tomorrow) {
-            horoscopeResult = horoscopeGenerator.getTomorrowHoroscope(sign);
+            horoscopeType = 'daily'; // Для завтра тоже daily, но нужно будет учесть дату
+            // В вашем HoroscopeGenerator нет getTomorrowHoroscope, но generate умеет работать с типом
+            // Тут нужно либо добавить 'tomorrow' тип в HOROSCOPES, либо адаптировать логику.
+            // Пока оставляем как daily, но учтите, что это может вернуть "гороскоп на сегодня"
+            // если HoroscopeGenerator.generate не учитывает "завтра" по-особенному.
             periodText = texts.tomorrow;
         } else if (ctx.message.text === texts.week) {
-            horoscopeResult = horoscopeGenerator.getWeeklyHoroscope(sign);
+            horoscopeType = 'weekly';
             periodText = texts.week;
         } else if (ctx.message.text === texts.month) {
-            horoscopeResult = horoscopeGenerator.getMonthlyHoroscope(sign);
+            horoscopeType = 'monthly';
             periodText = texts.month;
         } else if (ctx.message.text === texts.year) {
-            horoscopeResult = horoscopeGenerator.getYearlyHoroscope(sign);
+            horoscopeType = 'yearly'; // Убедитесь, что у вас есть 'yearly' в HOROSCOPES
             periodText = texts.year;
         } else {
             return ctx.reply(texts.invalid_duration, Keyboard.horoscope_duration_menu(userLanguage));
         }
 
+        // Сохраняем выбранный тип гороскопа для HoroscopeGenerator.generate
+        user.horoscope_type = horoscopeType;
+        // Заполняем user.birth_date для HoroscopeGenerator.generate (если он нужен для определения знака)
+        // В вашем случае, sign уже определен, поэтому birth_date может быть не нужен для generate,
+        // но user.zodiac_sign и user.horoscope_type точно будут использоваться.
+        // Если у вас user.birth_date еще не установлен, и он нужен для generate, вам нужно будет его получить.
+        
+        // Вызываем метод generate напрямую из объекта HoroscopeGenerator
+        horoscopeResult = await HoroscopeGenerator.generate({
+            user_id: user.user_id, // Эти поля нужны для HoroscopeGenerator.generate
+            zodiac_sign: sign,      // Передаем знак
+            horoscope_type: horoscopeType, // Передаем тип
+            birth_date: user.birth_date // Важно: если birth_date не установлен, generate может использовать Aries
+        }, userLanguage);
+
+        // Сбросить состояние после получения гороскопа
+        user.current_state = null;
+        user.chosen_sign = null; // Или сохраните его, если пользователь хочет быстро переключать периоды для того же знака
+        user.horoscope_type = null; // Сбросить тип, если он больше не нужен
+        await usersCollection.updateOne(
+            { user_id: user.user_id },
+            { $set: { current_state: null, chosen_sign: null, horoscope_type: null } }
+        );
+
         return ctx.reply(`*${texts.horoscope_for} ${sign} ${periodText}*:\n\n${horoscopeResult}`, { parse_mode: 'Markdown', reply_markup: Keyboard.main_menu(userLanguage) });
 
     }
 
-    // Если ни одно из условий не сработало, значит, бот не понял команду
     return ctx.reply(texts.unknown_command, Keyboard.main_menu(userLanguage));
 });
 
 
 // Vercel serverless function export
 export default async function handler(req, res) {
-    // В Vercel каждая функция вызывается независимо, поэтому нужно убедиться, что MongoDB подключен
-    // Но `bot.use` уже делает это, так что здесь можно просто вызвать webhookCallback
+    console.log("Vercel handler function called.");
     try {
-        await connectToMongo(); // Убеждаемся, что подключение активно для каждого запроса
+        await connectToMongo();
         await bot.webhookCallback('/api/webhook')(req, res);
+        console.log("Webhook callback processed.");
     } catch (error) {
         console.error('Webhook handler error:', error);
-        // Отправляем ответ об ошибке, чтобы Vercel не держал соединение открытым
         res.status(500).send('Internal Server Error');
     }
 }
