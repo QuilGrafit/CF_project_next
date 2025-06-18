@@ -1,8 +1,8 @@
 // pages/api/webhook.js
 
-import connectToDatabase from '../../lib/mongodb.js'; // Убедитесь, что .js есть
-import { HoroscopeGenerator, Keyboard } from '../../lib/horoscope.js'; // Убедитесь, что .js есть
-import { TelegramService } from '../../lib/telegram.js'; // Убедитесь, что .js есть
+import connectToDatabase from '../../lib/mongodb.js';
+import { HoroscopeGenerator, Keyboard } from '../../lib/horoscope.js';
+import { TelegramService } from '../../lib/telegram.js';
 
 // FSM States (состояния конечного автомата)
 const STATES = {
