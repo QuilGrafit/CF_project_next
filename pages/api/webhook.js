@@ -1,241 +1,228 @@
-// pages/api/webhook.js
-import { Telegraf, Markup, session } from 'telegraf';
-import { message } from 'telegraf/filters'; // <-- ИСПРАВЛЕНО: была опечатка => вместо from
-import { MongoClient } from 'mongodb';
-import { DateTime } from 'luxon';
-import HoroscopeGenerator from '../../lib/horoscope.js'; // Импортируем ваш ОБЪЕКТ HoroscopeGenerator
-import Keyboard from '../../lib/Keyboard.js';
-import TEXTS from '../../texts.js';
-import { sendMessage, showAds } from '../../lib/telegram.js';
+require('dotenv').config();
+const { Telegraf, Scenes, session } = require('telegraf');
+const { MongoClient } = require('mongodb');
+const cron = require('node-cron');
+const keyboards = require('./keyboards.js');
+const texts = require('./texts.js');
+const HoroscopeGenerator = require('./horoscope.js');
+const scenes = require('./scenes.js');
 
-// Загрузка переменных окружения
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const MONGO_URI = process.env.MONGO_URI;
-const MONGO_DB_NAME = process.env.MONGO_DB_NAME || 'sample_mflix';
-const USERS_COLLECTION_NAME = process.env.MONGO_COLLECTION_NAME || 'users';
-const TON_WALLET_ADDRESS = process.env.TON_WALLET_ADDRESS;
+const bot = new Telegraf(process.env.BOT_TOKEN);
+let usersCollection = null;
 
-console.log("Webhook script started.");
-console.log(`BOT_TOKEN loaded: ${!!BOT_TOKEN}`);
-console.log(`MONGO_URI loaded: ${!!MONGO_URI}`);
-
-if (!BOT_TOKEN) throw new Error('BOT_TOKEN must be provided!');
-if (!MONGO_URI) throw new Error('MONGO_URI must be provided!');
-
-const bot = new Telegraf(BOT_TOKEN);
-let usersCollection;
-
-// !!! ЭТА СТРОКА УДАЛЕНА ИЗ КОДА! НЕ НУЖНО СОЗДАВАТЬ ЭКЗЕМПЛЯР.
-// const horoscopeGenerator = new HoroscopeGenerator();
-// HoroscopeGenerator теперь это уже сам объект, его не нужно "конструировать"
-
-async function connectToMongo() {
-    if (usersCollection) {
-        console.log("MongoDB already connected.");
-        return;
-    }
-    try {
-        const client = new MongoClient(MONGO_URI);
-        await client.connect();
-        const db = client.db(MONGO_DB_NAME);
-        usersCollection = db.collection(USERS_COLLECTION_NAME);
-        console.log("MongoDB connected and collection obtained successfully!");
-    } catch (error) {
-        console.error("Failed to connect to MongoDB:", error);
-        throw error;
-    }
+// Инициализация MongoDB
+async function initDB() {
+  const client = new MongoClient(process.env.MONGO_URI);
+  await client.connect();
+  const db = client.db('astroBotDB');
+  usersCollection = db.collection('users');
+  console.log('Connected to MongoDB');
+  return usersCollection;
 }
 
-bot.use(async (ctx, next) => {
-    console.log("Middleware: Checking MongoDB connection...");
-    if (!usersCollection) {
-        await connectToMongo();
-    }
-    console.log("Middleware: MongoDB connection ensured. Processing next...");
-    await next();
-});
+// Получение данных пользователя
+async function getUser(userId) {
+  return usersCollection.findOne({ _id: userId }) || {
+    _id: userId,
+    sign: 'aries',
+    lang: 'ru',
+    birthDate: null
+  };
+}
 
-bot.use(async (ctx, next) => {
-    console.log(`Middleware: User ${ctx.from.id} request. Checking/creating user...`);
-    const userId = ctx.from.id;
-    let user = await usersCollection.findOne({ user_id: userId });
+// Обновление данных пользователя
+async function updateUser(userId, data) {
+  return usersCollection.updateOne(
+    { _id: userId },
+    { $set: data },
+    { upsert: true }
+  );
+}
 
-    if (!user) {
-        user = {
-            user_id: userId,
-            username: ctx.from.username,
-            language: 'ru', // Default language
-            registration_date: new Date(),
-            last_activity: new Date(),
-            current_state: null,
-            chosen_sign: null,
-            birth_date: null, // <-- ДОБАВЛЕНО для HoroscopeGenerator.generate
-            horoscope_type: null, // <-- ДОБАВЛЕНО для HoroscopeGenerator.generate
-        };
-        await usersCollection.insertOne(user);
-        console.log(`New user registered: ${userId}`);
-    } else {
-        await usersCollection.updateOne(
-            { user_id: userId },
-            { $set: { last_activity: new Date() } }
-        );
-        console.log(`Existing user ${userId} updated.`);
-    }
-    ctx.state.user = user;
-    console.log(`Middleware: User state set for ${userId}. Processing next...`);
-    await next();
-});
+// Создаем сцену
+const stage = new Scenes.Stage([
+  scenes.birthDateScene(usersCollection),
+  scenes.magicBallScene(),
+  scenes.compatibilityScene(usersCollection, HoroscopeGenerator)
+]);
 
-const getUserLanguage = (ctx) => {
-    const userLanguage = ctx.state.user.language;
-    if (!userLanguage || !TEXTS[userLanguage]) {
-        console.warn(`Language '${userLanguage}' not found in TEXTS for user ${ctx.from.id}. Falling back to 'ru'.`);
-        return 'ru';
-    }
-    return userLanguage;
-};
+bot.use(session());
+bot.use(stage.middleware());
 
-const STEPS = {
-    CHOOSE_SIGN: 'choose_sign',
-    CHOOSE_DURATION: 'choose_duration',
-};
+// Отправка мотивации
+async function sendMotivation(ctx) {
+  const motivations = texts.ru.motivations;
+  const motivation = motivations[Math.floor(Math.random() * motivations.length)];
+  
+  await ctx.replyWithHTML(
+    `💫 <b>${texts.ru.motivation_title}</b>\n\n"${motivation}"\n\nПусть этот день принесет вам радость и вдохновение! ✨`
+  );
+}
 
+// Главное меню
+async function showMainMenu(ctx) {
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  
+  await ctx.reply(
+    texts[lang].main_menu_prompt,
+    keyboards.mainMenu(lang)
+  );
+}
+
+// Обработчики команд
 bot.start(async (ctx) => {
-    console.log("Handler: /start command received.");
-    try {
-        const userLanguage = getUserLanguage(ctx);
-        console.log(`Start handler: userLanguage is '${userLanguage}'.`);
-        console.log(`Start handler: TEXTS[userLanguage].welcome_message: '${TEXTS[userLanguage]?.welcome_message}'`);
-        console.log(`Start handler: Keyboard.main_menu type: ${typeof Keyboard.main_menu}`);
-
-        await usersCollection.updateOne(
-            { user_id: ctx.from.id },
-            { $set: { current_state: null, chosen_sign: null } }
-        );
-        await ctx.reply(TEXTS[userLanguage].welcome_message, Keyboard.main_menu(userLanguage));
-        console.log("Start handler: Reply sent successfully.");
-    } catch (error) {
-        console.error("Error in /start handler:", error);
-        const userLanguage = getUserLanguage(ctx);
-        await ctx.reply(TEXTS[userLanguage]?.error_message || "Произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте еще раз позже.");
-    }
+  await updateUser(ctx.from.id, {
+    firstName: ctx.from.first_name,
+    lastName: ctx.from.last_name,
+    username: ctx.from.username,
+    createdAt: new Date()
+  });
+  
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  
+  await ctx.replyWithHTML(
+    `✨ Привет, ${ctx.from.first_name}! ${texts[lang].welcome}`
+  );
+  
+  await sendMotivation(ctx);
+  await showMainMenu(ctx);
 });
 
-bot.hears(message('text'), async (ctx) => {
-    console.log(`Handler: Hears text received: "${ctx.message.text}"`);
-    const userLanguage = getUserLanguage(ctx);
-    const texts = TEXTS[userLanguage];
-    const user = ctx.state.user;
-
-    // Главное меню
-    if (ctx.message.text === texts.get_horoscope) {
-        user.current_state = STEPS.CHOOSE_SIGN;
-        await usersCollection.updateOne({ user_id: user.user_id }, { $set: { current_state: STEPS.CHOOSE_SIGN } });
-        return ctx.reply(texts.choose_sign, Keyboard.zodiac_signs_menu(userLanguage));
-    } else if (ctx.message.text === texts.settings) {
-        return ctx.reply("Настройки пока не реализованы.", Keyboard.main_menu(userLanguage));
-    } else if (ctx.message.text === texts.about_us) {
-        return ctx.reply("Информация о боте.", Keyboard.main_menu(userLanguage));
-    } else if (ctx.message.text === texts.ton_wallet) {
-        return ctx.reply(`TON кошелек: ${TON_WALLET_ADDRESS}`, Keyboard.main_menu(userLanguage));
-    } else if (ctx.message.text === texts.share_bot) {
-        const botUsername = ctx.botInfo.username;
-        const shareText = encodeURIComponent(TEXTS[userLanguage].welcome_message + `\n\n@${botUsername}`);
-        const shareUrl = `https://t.me/share/url?url=https://t.me/${botUsername}&text=${shareText}`;
-        return ctx.reply('Нажмите, чтобы поделиться:', Markup.inlineKeyboard([
-            Markup.urlButton(texts.share_bot, shareUrl)
-        ]));
-    } else if (ctx.message.text === texts.back_to_main_menu) {
-        user.current_state = null;
-        user.chosen_sign = null;
-        await usersCollection.updateOne(
-            { user_id: user.user_id },
-            { $set: { current_state: null, chosen_sign: null } }
-        );
-        return ctx.reply(texts.welcome_message, Keyboard.main_menu(userLanguage));
-    }
-
-    // Обработка знаков зодиака
-    if (user.current_state === STEPS.CHOOSE_SIGN) {
-        // !!! ИСПОЛЬЗУЕМ HoroscopeGenerator НАПРЯМУЮ, БЕЗ new
-        const sign = HoroscopeGenerator.validateSign(ctx.message.text);
-        if (sign) {
-            user.chosen_sign = sign;
-            user.current_state = STEPS.CHOOSE_DURATION;
-            await usersCollection.updateOne(
-                { user_id: user.user_id },
-                { $set: { chosen_sign: sign, current_state: STEPS.CHOOSE_DURATION } }
-            );
-            return ctx.reply(texts.choose_duration, Keyboard.horoscope_duration_menu(userLanguage));
-        } else {
-            return ctx.reply(texts.invalid_sign, Keyboard.zodiac_signs_menu(userLanguage));
-        }
-    }
-
-    // Обработка длительности гороскопа
-    if (user.current_state === STEPS.CHOOSE_DURATION && user.chosen_sign) {
-        const sign = user.chosen_sign;
-        let horoscopeResult = "";
-        let periodText = "";
-        let horoscopeType; // Переменная для типа гороскопа, который будет передан в generate
-
-        if (ctx.message.text === texts.today) {
-            horoscopeType = 'daily';
-            periodText = texts.today;
-        } else if (ctx.message.text === texts.tomorrow) {
-            horoscopeType = 'daily'; // Ваш generate не имеет типа 'tomorrow', используем 'daily'
-            // Если вы хотите гороскоп на "завтра", вам нужно будет адаптировать generate
-            // или добавлять логику здесь для смещения даты на +1 день.
-            periodText = texts.tomorrow;
-        } else if (ctx.message.text === texts.week) {
-            horoscopeType = 'weekly';
-            periodText = texts.week;
-        } else if (ctx.message.text === texts.month) {
-            horoscopeType = 'monthly';
-            periodText = texts.month;
-        } else if (ctx.message.text === texts.year) {
-            horoscopeType = 'yearly'; // Убедитесь, что этот тип есть в вашем HoroscopeGenerator.HOROSCOPES
-            periodText = texts.year;
-        } else {
-            return ctx.reply(texts.invalid_duration, Keyboard.horoscope_duration_menu(userLanguage));
-        }
-
-        // Обновляем user.horoscope_type перед вызовом generate
-        user.horoscope_type = horoscopeType;
-
-        // !!! ВЫЗЫВАЕМ generate НАПРЯМУЮ ИЗ ОБЪЕКТА HoroscopeGenerator
-        horoscopeResult = await HoroscopeGenerator.generate({
-            user_id: user.user_id,
-            zodiac_sign: sign, // Передаем выбранный знак
-            horoscope_type: horoscopeType, // Передаем выбранный тип
-            birth_date: user.birth_date // Передаем birth_date, если он установлен у пользователя
-        }, userLanguage);
-
-        // Сбросить состояние после получения гороскопа
-        user.current_state = null;
-        user.chosen_sign = null;
-        user.horoscope_type = null;
-        await usersCollection.updateOne(
-            { user_id: user.user_id },
-            { $set: { current_state: null, chosen_sign: null, horoscope_type: null } }
-        );
-
-        return ctx.reply(`*${texts.horoscope_for} ${sign} ${periodText}*:\n\n${horoscopeResult}`, { parse_mode: 'Markdown', reply_markup: Keyboard.main_menu(userLanguage) });
-
-    }
-
-    return ctx.reply(texts.unknown_command, Keyboard.main_menu(userLanguage));
+bot.hears(texts.ru.main_menu_horoscope, async (ctx) => {
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  
+  try {
+    const horoscope = await HoroscopeGenerator.generate(user._id, user);
+    await ctx.replyWithHTML(horoscope);
+    
+    // Кнопки под гороскопом
+    await ctx.reply(texts[lang].after_horoscope_prompt, keyboards.afterHoroscope(lang));
+  } catch (error) {
+    console.error('Error generating horoscope:', error);
+    await ctx.reply(texts[lang].horoscope_error);
+  }
 });
 
-// Vercel serverless function export
-export default async function handler(req, res) {
-    console.log("Vercel handler function called.");
-    try {
-        await connectToMongo();
-        await bot.webhookCallback('/api/webhook')(req, res);
-        console.log("Webhook callback processed.");
-    } catch (error) {
-        console.error('Webhook handler error:', error);
-        res.status(500).send('Internal Server Error');
-    }
+bot.hears(texts.ru.main_menu_settings, async (ctx) => {
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  await ctx.reply(texts[lang].settings_menu_choose, keyboards.settingsMenu(lang));
+});
+
+bot.hears(texts.ru.main_menu_support, async (ctx) => {
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  
+  await ctx.replyWithHTML(
+    texts[lang].support_us_prompt.replace('{wallet}', process.env.TON_WALLET_ADDRESS),
+    keyboards.supportMenu(lang)
+  );
+});
+
+bot.hears(texts.ru.main_menu_entertainment, async (ctx) => {
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  await ctx.reply(texts[lang].entertainment_menu_choose, keyboards.entertainmentMenu(lang));
+});
+
+bot.hears(texts.ru.compatibility_title, async (ctx) => {
+  await ctx.scene.enter('COMPATIBILITY_SCENE');
+});
+
+// Обработчики callback-кнопок
+bot.action('change_sign', async (ctx) => {
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  
+  await ctx.editMessageText(
+    texts[lang].choose_sign,
+    keyboards.signSelectionMenu(lang)
+  );
+});
+
+bot.action(/set_sign_(.+)/, async (ctx) => {
+  const sign = ctx.match[1];
+  await updateUser(ctx.from.id, { sign });
+  
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  
+  await ctx.editMessageText(
+    texts[lang].sign_set_success.replace('{sign}', HoroscopeGenerator.getSignName(sign, lang))
+  );
+});
+
+bot.action('set_birth_date', async (ctx) => {
+  await ctx.scene.enter('BIRTH_DATE_SCENE');
+});
+
+bot.action('get_cookie', async (ctx) => {
+  const user = await getUser(ctx.from.id);
+  const lang = user.lang || 'ru';
+  
+  const fortune = HoroscopeGenerator.getCookieFortune();
+  await ctx.editMessageText(
+    texts[lang].cookie_fortune_message.replace('{fortune}', fortune),
+    keyboards.cookieMenu(lang)
+  );
+});
+
+bot.action('ask_magic_ball', async (ctx) => {
+  await ctx.scene.enter('MAGIC_BALL_SCENE');
+});
+
+bot.action('compatibility', async (ctx) => {
+  await ctx.scene.enter('COMPATIBILITY_SCENE');
+});
+
+bot.action('motivation', async (ctx) => {
+  await sendMotivation(ctx);
+});
+
+// Запуск бота
+async function start() {
+  try {
+    await initDB();
+    
+    // Настройка ежедневной рассылки в 9 утра
+    cron.schedule('0 9 * * *', async () => {
+      const users = await usersCollection.find({}).toArray();
+      
+      for (const user of users) {
+        try {
+          const horoscope = await HoroscopeGenerator.generate(user._id, user);
+          await bot.telegram.sendMessage(user._id, horoscope, { parse_mode: 'HTML' });
+          
+          // Отправляем мотивацию
+          const motivations = texts[user.lang || 'ru'].motivations;
+          const motivation = motivations[Math.floor(Math.random() * motivations.length)];
+          
+          await bot.telegram.sendMessage(
+            user._id,
+            `💫 <b>${texts[user.lang || 'ru'].motivation_title}</b>\n\n"${motivation}"\n\nХорошего дня! ✨`,
+            { parse_mode: 'HTML' }
+          );
+          
+        } catch (e) {
+          console.error(`Error sending to ${user._id}:`, e);
+        }
+      }
+    }, {
+      timezone: 'Europe/Moscow'
+    });
+    
+    bot.launch();
+    console.log('Бот запущен!');
+  } catch (error) {
+    console.error('Ошибка запуска бота:', error);
+  }
 }
+
+start();
+
+// Обработка остановки
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
