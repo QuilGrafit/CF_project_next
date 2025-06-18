@@ -1,7 +1,7 @@
 // pages/api/cron.js
-import { connectToDatabase } from '../../lib/mongodb';
-import { HoroscopeGenerator } from '../../lib/horoscope';
-import { sendMessage, showAds } from '../../lib/telegram'; // Убедитесь, что импортируете showAds
+import clientPromise from '../../lib/mongodb.js';
+import { HoroscopeGenerator } from '../../lib/horoscope.js';
+import { sendMessage, showAds } from '../../lib/telegram.js'; // Убедитесь, что импортируете showAds
 
 export default async function handler(req, res) {
     if (req.method !== 'GET') { // Cron jobs на Vercel обычно вызываются через GET
