@@ -1,9 +1,9 @@
 // pages/api/webhook.js
 import { Telegraf, Markup, session } from 'telegraf';
-import { message } => 'telegraf/filters'; // Исправлена опечатка в стрелочной функции
+import { message } from 'telegraf/filters'; // <-- ИСПРАВЛЕНО: была опечатка => вместо from
 import { MongoClient } from 'mongodb';
 import { DateTime } from 'luxon';
-import HoroscopeGenerator from '../../lib/horoscope.js'; // Импортируем ваш объект HoroscopeGenerator
+import HoroscopeGenerator from '../../lib/horoscope.js'; // Импортируем ваш ОБЪЕКТ HoroscopeGenerator
 import Keyboard from '../../lib/Keyboard.js';
 import TEXTS from '../../texts.js';
 import { sendMessage, showAds } from '../../lib/telegram.js';
@@ -25,8 +25,9 @@ if (!MONGO_URI) throw new Error('MONGO_URI must be provided!');
 const bot = new Telegraf(BOT_TOKEN);
 let usersCollection;
 
-// !!! ЭТА СТРОКА УДАЛЕНА ИЛИ ЗАКОММЕНТИРОВАНА: const horoscopeGenerator = new HoroscopeGenerator();
-// Теперь HoroscopeGenerator - это уже сам объект, его не нужно "конструировать"
+// !!! ЭТА СТРОКА УДАЛЕНА ИЗ КОДА! НЕ НУЖНО СОЗДАВАТЬ ЭКЗЕМПЛЯР.
+// const horoscopeGenerator = new HoroscopeGenerator();
+// HoroscopeGenerator теперь это уже сам объект, его не нужно "конструировать"
 
 async function connectToMongo() {
     if (usersCollection) {
@@ -68,10 +69,8 @@ bot.use(async (ctx, next) => {
             last_activity: new Date(),
             current_state: null,
             chosen_sign: null,
-            // Если вы храните zodiac_sign и birth_date в user объекте, убедитесь, что они инициализированы
-            zodiac_sign: null,
-            birth_date: null,
-            horoscope_type: null,
+            birth_date: null, // <-- ДОБАВЛЕНО для HoroscopeGenerator.generate
+            horoscope_type: null, // <-- ДОБАВЛЕНО для HoroscopeGenerator.generate
         };
         await usersCollection.insertOne(user);
         console.log(`New user registered: ${userId}`);
@@ -158,7 +157,7 @@ bot.hears(message('text'), async (ctx) => {
 
     // Обработка знаков зодиака
     if (user.current_state === STEPS.CHOOSE_SIGN) {
-        // Теперь вызываем метод validateSign напрямую из объекта HoroscopeGenerator
+        // !!! ИСПОЛЬЗУЕМ HoroscopeGenerator НАПРЯМУЮ, БЕЗ new
         const sign = HoroscopeGenerator.validateSign(ctx.message.text);
         if (sign) {
             user.chosen_sign = sign;
@@ -178,18 +177,15 @@ bot.hears(message('text'), async (ctx) => {
         const sign = user.chosen_sign;
         let horoscopeResult = "";
         let periodText = "";
+        let horoscopeType; // Переменная для типа гороскопа, который будет передан в generate
 
-        // Устанавливаем horoscope_type для вызова HoroscopeGenerator.generate
-        let horoscopeType;
         if (ctx.message.text === texts.today) {
             horoscopeType = 'daily';
             periodText = texts.today;
         } else if (ctx.message.text === texts.tomorrow) {
-            horoscopeType = 'daily'; // Для завтра тоже daily, но нужно будет учесть дату
-            // В вашем HoroscopeGenerator нет getTomorrowHoroscope, но generate умеет работать с типом
-            // Тут нужно либо добавить 'tomorrow' тип в HOROSCOPES, либо адаптировать логику.
-            // Пока оставляем как daily, но учтите, что это может вернуть "гороскоп на сегодня"
-            // если HoroscopeGenerator.generate не учитывает "завтра" по-особенному.
+            horoscopeType = 'daily'; // Ваш generate не имеет типа 'tomorrow', используем 'daily'
+            // Если вы хотите гороскоп на "завтра", вам нужно будет адаптировать generate
+            // или добавлять логику здесь для смещения даты на +1 день.
             periodText = texts.tomorrow;
         } else if (ctx.message.text === texts.week) {
             horoscopeType = 'weekly';
@@ -198,31 +194,27 @@ bot.hears(message('text'), async (ctx) => {
             horoscopeType = 'monthly';
             periodText = texts.month;
         } else if (ctx.message.text === texts.year) {
-            horoscopeType = 'yearly'; // Убедитесь, что у вас есть 'yearly' в HOROSCOPES
+            horoscopeType = 'yearly'; // Убедитесь, что этот тип есть в вашем HoroscopeGenerator.HOROSCOPES
             periodText = texts.year;
         } else {
             return ctx.reply(texts.invalid_duration, Keyboard.horoscope_duration_menu(userLanguage));
         }
 
-        // Сохраняем выбранный тип гороскопа для HoroscopeGenerator.generate
+        // Обновляем user.horoscope_type перед вызовом generate
         user.horoscope_type = horoscopeType;
-        // Заполняем user.birth_date для HoroscopeGenerator.generate (если он нужен для определения знака)
-        // В вашем случае, sign уже определен, поэтому birth_date может быть не нужен для generate,
-        // но user.zodiac_sign и user.horoscope_type точно будут использоваться.
-        // Если у вас user.birth_date еще не установлен, и он нужен для generate, вам нужно будет его получить.
-        
-        // Вызываем метод generate напрямую из объекта HoroscopeGenerator
+
+        // !!! ВЫЗЫВАЕМ generate НАПРЯМУЮ ИЗ ОБЪЕКТА HoroscopeGenerator
         horoscopeResult = await HoroscopeGenerator.generate({
-            user_id: user.user_id, // Эти поля нужны для HoroscopeGenerator.generate
-            zodiac_sign: sign,      // Передаем знак
-            horoscope_type: horoscopeType, // Передаем тип
-            birth_date: user.birth_date // Важно: если birth_date не установлен, generate может использовать Aries
+            user_id: user.user_id,
+            zodiac_sign: sign, // Передаем выбранный знак
+            horoscope_type: horoscopeType, // Передаем выбранный тип
+            birth_date: user.birth_date // Передаем birth_date, если он установлен у пользователя
         }, userLanguage);
 
         // Сбросить состояние после получения гороскопа
         user.current_state = null;
-        user.chosen_sign = null; // Или сохраните его, если пользователь хочет быстро переключать периоды для того же знака
-        user.horoscope_type = null; // Сбросить тип, если он больше не нужен
+        user.chosen_sign = null;
+        user.horoscope_type = null;
         await usersCollection.updateOne(
             { user_id: user.user_id },
             { $set: { current_state: null, chosen_sign: null, horoscope_type: null } }
@@ -234,7 +226,6 @@ bot.hears(message('text'), async (ctx) => {
 
     return ctx.reply(texts.unknown_command, Keyboard.main_menu(userLanguage));
 });
-
 
 // Vercel serverless function export
 export default async function handler(req, res) {
