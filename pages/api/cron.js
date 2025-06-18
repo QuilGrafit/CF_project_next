@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const HoroscopeGenerator = require('./horoscopeGenerator');
+const HoroscopeGenerator = require('./horoscope.js');
 
 module.exports = function setupCronJobs(bot, usersCollection) {
   // Ежедневная рассылка в 9 утра
