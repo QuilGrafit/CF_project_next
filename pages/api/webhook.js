@@ -4,7 +4,7 @@ import { sendMessage, showAds } from '../../lib/telegram.js';
 
 import { Telegraf } from 'telegraf';
 import { MongoClient } from 'mongodb';
-import Keyboard from '../../Keyboard'; // <-- ПРОВЕРЬТЕ ПУТЬ К Keyboard.js
+import Keyboard from '../../Keyboard.js'; // <-- ПРОВЕРЬТЕ ПУТЬ К Keyboard.js
 
 // Переменные окружения
 const BOT_TOKEN = process.env.BOT_TOKEN;
