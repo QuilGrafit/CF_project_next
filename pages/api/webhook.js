@@ -1,9 +1,8 @@
 // pages/api/webhook.js
 
-// Импорты: ОБРАТИТЕ ВНИМАНИЕ НА .js В КОНЦЕ ПУТЕЙ К ЛОКАЛЬНЫМ ФАЙЛАМ
-import connectToDatabase from '../../lib/mongodb.js'; // <-- ИСПРАВЛЕНО: добавлено .js
-import { HoroscopeGenerator, Keyboard } from '../../lib/horoscope.js'; // <-- ИСПРАВЛЕНО: добавлено .js
-import { TelegramService } from '../../lib/telegram.js'; // <-- ИСПРАВЛЕНО: добавлено .js
+import connectToDatabase from '../../lib/mongodb.js'; // Убедитесь, что .js есть
+import { HoroscopeGenerator, Keyboard } from '../../lib/horoscope.js'; // Убедитесь, что .js есть
+import { TelegramService } from '../../lib/telegram.js'; // Убедитесь, что .js есть
 
 // FSM States (состояния конечного автомата)
 const STATES = {
